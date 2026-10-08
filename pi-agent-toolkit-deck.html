@@ -1,0 +1,919 @@
+<title>Pi Agent Toolkit — A Technical Deep Dive</title>
+<style>
+  :root{
+    --bg:#f6f4ee;
+    --surface:#ffffff;
+    --surface-2:#efece2;
+    --text:#1c1d22;
+    --text-muted:#5c5f6d;
+    --border:#e0dccf;
+    --accent:#b8631a;
+    --accent-ink:#ffffff;
+    --accent-2:#2f6f6a;
+    --panel-bg:#14151b;
+    --panel-text:#dfe2ea;
+    --panel-muted:#8a8fa0;
+    --panel-accent:#f0b429;
+    --panel-accent-2:#6fd3c7;
+    --panel-border:#2a2c37;
+    --font-display: ui-monospace, "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+    --font-body: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Noto Serif", "Times New Roman", serif;
+    --font-mono: var(--font-display);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#111217;
+      --surface:#1a1c23;
+      --surface-2:#20232c;
+      --text:#eae7de;
+      --text-muted:#9a9eae;
+      --border:#2c2f3a;
+      --accent:#e8a33d;
+      --accent-ink:#1c1200;
+      --accent-2:#5fb8b0;
+      --panel-bg:#0c0d12;
+      --panel-text:#dfe2ea;
+      --panel-muted:#7e8496;
+      --panel-accent:#f0b429;
+      --panel-accent-2:#6fd3c7;
+      --panel-border:#252734;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#111217; --surface:#1a1c23; --surface-2:#20232c; --text:#eae7de; --text-muted:#9a9eae;
+    --border:#2c2f3a; --accent:#e8a33d; --accent-ink:#1c1200; --accent-2:#5fb8b0;
+    --panel-bg:#0c0d12; --panel-text:#dfe2ea; --panel-muted:#7e8496; --panel-accent:#f0b429; --panel-accent-2:#6fd3c7; --panel-border:#252734;
+  }
+  :root[data-theme="light"]{
+    --bg:#f6f4ee; --surface:#ffffff; --surface-2:#efece2; --text:#1c1d22; --text-muted:#5c5f6d;
+    --border:#e0dccf; --accent:#b8631a; --accent-ink:#ffffff; --accent-2:#2f6f6a;
+    --panel-bg:#14151b; --panel-text:#dfe2ea; --panel-muted:#8a8fa0; --panel-accent:#f0b429; --panel-accent-2:#6fd3c7; --panel-border:#2a2c37;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--font-body);
+    overflow:hidden;
+  }
+  ::selection{ background:var(--accent); color:var(--accent-ink); }
+
+  .deck{ position:fixed; inset:0; }
+
+  .progress-track{
+    position:fixed; top:0; left:0; right:0; height:3px; background:var(--border); z-index:50;
+  }
+  .progress-fill{ height:100%; background:var(--accent); width:2%; transition:width .4s ease; }
+
+  .slide{
+    position:absolute; inset:0;
+    display:flex; flex-direction:column; justify-content:center;
+    padding: clamp(1.6rem,5vw,5.5rem) clamp(1.6rem,8vw,9rem);
+    opacity:0; visibility:hidden; transform:translateY(10px);
+    transition:opacity .38s ease, transform .38s ease;
+    overflow-y:auto;
+  }
+  .slide.active{ opacity:1; visibility:visible; transform:translateY(0); }
+  @media (prefers-reduced-motion: reduce){
+    .slide{ transition:none; }
+  }
+
+  .slide-inner{ max-width:64rem; margin:0 auto; width:100%; }
+  .slide.wide .slide-inner{ max-width:80rem; }
+
+  .slide-meta{
+    display:flex; justify-content:space-between; align-items:baseline;
+    font-family:var(--font-mono); text-transform:uppercase; letter-spacing:.14em;
+    font-size:.7rem; color:var(--text-muted); margin-bottom:clamp(1.1rem,3vw,2rem);
+    max-width:64rem; margin-left:auto; margin-right:auto;
+  }
+  .slide.wide .slide-meta{ max-width:80rem; }
+  .slide-meta .idx{ font-variant-numeric:tabular-nums; color:var(--accent); }
+
+  .kicker{
+    font-family:var(--font-mono); text-transform:uppercase; letter-spacing:.16em;
+    font-size:.78rem; color:var(--accent); margin:0 0 .8rem 0; font-weight:600;
+  }
+  h1{
+    font-family:var(--font-display); font-weight:700; letter-spacing:-.01em;
+    font-size:clamp(2.3rem,6vw,4.4rem); line-height:1.04; margin:0 0 1rem 0; text-wrap:balance;
+  }
+  h2{
+    font-family:var(--font-display); font-weight:700; letter-spacing:-.01em;
+    font-size:clamp(1.5rem,3.6vw,2.5rem); line-height:1.12; margin:0 0 1.3rem 0; text-wrap:balance;
+  }
+  .lede{
+    font-size:clamp(1.05rem,2vw,1.35rem); line-height:1.55; color:var(--text); max-width:42rem;
+  }
+  p{ line-height:1.65; font-size:1.02rem; color:var(--text); max-width:42rem; }
+  .wide p{ max-width:52rem; }
+  ul.plain{ margin:0; padding:0; list-style:none; }
+  .bullets{ display:flex; flex-direction:column; gap:.9rem; margin:1.2rem 0; padding:0; max-width:44rem; }
+  .bullets li{ list-style:none; line-height:1.55; padding-left:1.4rem; position:relative; }
+  .bullets li::before{ content:"—"; position:absolute; left:0; color:var(--accent); font-weight:700; }
+  .bullets.wide-list{ max-width:56rem; }
+
+  .callout{
+    margin-top:1.4rem; padding:.9rem 1.2rem; border-left:3px solid var(--accent);
+    background:var(--surface-2); font-size:.95rem; color:var(--text-muted); max-width:42rem;
+    font-style:italic;
+  }
+  .meta-row{
+    margin-top:1.6rem; font-family:var(--font-mono); font-size:.78rem; color:var(--text-muted);
+    letter-spacing:.02em;
+  }
+
+  .pkg-list{ display:flex; flex-direction:column; gap:1rem; margin-top:1.4rem; max-width:48rem; }
+  .pkg-row{ display:grid; grid-template-columns:minmax(11rem,15rem) 1fr; gap:1.2rem; align-items:baseline;
+    border-top:1px solid var(--border); padding-top:.9rem; }
+  .pkg-row:first-child{ border-top:none; padding-top:0; }
+  .pkg-name{ font-family:var(--font-mono); font-weight:600; font-size:.92rem; color:var(--accent-2); }
+  .pkg-desc{ font-size:.96rem; color:var(--text); line-height:1.5; }
+
+  .panel{
+    background:var(--panel-bg); color:var(--panel-text); border:1px solid var(--panel-border);
+    border-radius:8px; padding:1.2rem 1.4rem; font-family:var(--font-mono); font-size:.86rem;
+    line-height:1.6; overflow-x:auto; margin-top:1rem; max-width:52rem;
+  }
+  .wide .panel{ max-width:76rem; }
+  .panel pre{ margin:0; white-space:pre; }
+  .panel .c{ color:var(--panel-muted); font-style:italic; }
+  .panel .k{ color:var(--panel-accent-2); }
+  .panel .s{ color:var(--panel-accent); }
+  .source-tag{
+    font-family:var(--font-mono); font-size:.72rem; color:var(--text-muted); margin-top:.5rem;
+    letter-spacing:.03em;
+  }
+
+  .divider-slide .slide-inner{ text-align:left; }
+  .divider-num{ font-family:var(--font-mono); font-size:clamp(3rem,10vw,7rem); color:var(--accent);
+    font-weight:700; line-height:1; opacity:.85; }
+  .divider-title{ font-family:var(--font-display); font-size:clamp(2.2rem,6vw,4rem); font-weight:700;
+    margin:.3rem 0 .8rem 0; text-wrap:balance; }
+  .divider-sub{ font-size:1.2rem; color:var(--text-muted); max-width:36rem; }
+
+  .compare-grid{ display:grid; grid-template-columns:1fr 1fr; gap:1.4rem; margin-top:1.3rem; max-width:60rem; }
+  @media (max-width:760px){ .compare-grid{ grid-template-columns:1fr; } }
+  .compare-card{ border-top:3px solid var(--accent); background:var(--surface); border-radius:6px; padding:1rem 1.1rem; }
+  .compare-card.alt{ border-top-color:var(--accent-2); }
+  .compare-card h3{ font-family:var(--font-mono); font-size:.85rem; text-transform:uppercase; letter-spacing:.08em;
+    margin:0 0 .7rem 0; color:var(--text-muted); }
+  .compare-card .panel{ margin-top:.3rem; font-size:.78rem; padding:.9rem 1rem; }
+
+  table.deck-table{ width:100%; border-collapse:collapse; margin-top:1.2rem; font-size:.92rem; }
+  table.deck-table th{ text-align:left; font-family:var(--font-mono); text-transform:uppercase; font-size:.7rem;
+    letter-spacing:.08em; color:var(--text-muted); border-bottom:2px solid var(--border); padding:.5rem .8rem .5rem 0; }
+  table.deck-table td{ padding:.65rem .8rem .65rem 0; border-bottom:1px solid var(--border); vertical-align:top; line-height:1.5; }
+  table.deck-table td:first-child, table.deck-table th:first-child{ font-family:var(--font-mono); color:var(--accent-2); white-space:nowrap; }
+  .table-wrap{ overflow-x:auto; max-width:76rem; }
+
+  .mermaid{ background:transparent; }
+  .diagram-panel{ background:var(--panel-bg); border:1px solid var(--panel-border); border-radius:8px;
+    padding:1.2rem; margin-top:1rem; max-width:76rem; overflow-x:auto; }
+  .diagram-caption{ font-size:.85rem; color:var(--text-muted); margin-top:.7rem; font-style:italic; max-width:52rem; }
+
+  .term-mock{ background:var(--panel-bg); border:1px solid var(--panel-border); border-radius:8px; overflow:hidden; }
+  .term-mock .bar{ display:flex; gap:.35rem; padding:.6rem .8rem; border-bottom:1px solid var(--panel-border); }
+  .term-mock .bar span{ width:.6rem; height:.6rem; border-radius:50%; background:var(--panel-border); }
+  .term-mock .lines{ font-family:var(--font-mono); font-size:.8rem; padding:.8rem 1rem; color:var(--panel-muted); }
+  .term-mock .lines .row{ padding:.15rem 0; white-space:pre; }
+  .term-mock .lines .row.hit{ color:var(--panel-accent); background:rgba(240,180,41,.08); }
+  .diff-grid{ display:grid; grid-template-columns:1fr auto 1fr; gap:1rem; align-items:center; margin-top:1.2rem; max-width:60rem; }
+  .diff-grid .arrow{ font-family:var(--font-mono); color:var(--accent); font-size:1.4rem; text-align:center; }
+  .diff-label{ font-family:var(--font-mono); font-size:.7rem; text-transform:uppercase; letter-spacing:.1em; color:var(--text-muted); margin-bottom:.4rem; }
+
+  .stat-row{ display:flex; gap:2.4rem; flex-wrap:wrap; margin-top:1.6rem; }
+  .stat{ }
+  .stat .n{ font-family:var(--font-display); font-size:1.6rem; font-weight:700; color:var(--accent); }
+  .stat .l{ font-size:.8rem; color:var(--text-muted); font-family:var(--font-mono); text-transform:uppercase; letter-spacing:.06em; }
+
+  ol.agenda{ list-style:none; margin:1.4rem 0 0 0; padding:0; display:flex; flex-direction:column; gap:1.1rem; max-width:46rem; counter-reset:agenda; }
+  ol.agenda li{ counter-increment:agenda; display:grid; grid-template-columns:2.4rem 1fr; gap:1rem; align-items:baseline; }
+  ol.agenda li::before{ content:counter(agenda,decimal-leading-zero); font-family:var(--font-display); color:var(--accent); font-weight:700; font-size:1.1rem; }
+  ol.agenda .a-title{ font-weight:600; }
+  ol.agenda .a-desc{ display:block; color:var(--text-muted); font-size:.92rem; margin-top:.15rem; }
+
+  /* chrome: nav */
+  .chrome{ position:fixed; inset:0; pointer-events:none; z-index:40; }
+  .nav-btn{
+    position:absolute; bottom:1.6rem; pointer-events:auto; cursor:pointer;
+    width:2.6rem; height:2.6rem; border-radius:50%; border:1px solid var(--border);
+    background:var(--surface); color:var(--text); display:flex; align-items:center; justify-content:center;
+    font-family:var(--font-mono); font-size:1rem; transition:background .15s, transform .15s;
+  }
+  .nav-btn:hover{ background:var(--surface-2); transform:scale(1.05); }
+  .nav-btn:active{ transform:scale(.95); }
+  .nav-btn.prev{ left:1.6rem; }
+  .nav-btn.next{ right:1.6rem; }
+  .nav-btn[disabled]{ opacity:.3; pointer-events:none; }
+  .nav-btn:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+
+  .section-dots{
+    position:fixed; bottom:1.9rem; left:50%; transform:translateX(-50%);
+    display:flex; gap:.5rem; pointer-events:auto; z-index:41;
+  }
+  .section-dots .dot{
+    width:.5rem; height:.5rem; border-radius:50%; background:var(--border); transition:background .2s, width .2s;
+  }
+  .section-dots .dot.on{ background:var(--accent); width:1.3rem; border-radius:.3rem; }
+
+  .counter{
+    position:fixed; top:1.1rem; right:1.4rem; font-family:var(--font-mono); font-size:.72rem;
+    color:var(--text-muted); z-index:41; letter-spacing:.04em; font-variant-numeric:tabular-nums;
+  }
+
+  a{ color:var(--accent-2); }
+</style>
+
+<div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+<div class="counter" id="counterLabel">01 / 38</div>
+
+<div class="deck" id="deck">
+
+  <!-- 1 -->
+  <section class="slide" data-section="Cover">
+    <div class="slide-inner">
+      <p class="kicker">Technical deep dive</p>
+      <h1>Pi Agent Toolkit</h1>
+      <p class="lede">How earendil-works built a coding agent out of four small, swappable pieces — and why the design choices matter for anyone building on top of LLMs.</p>
+      <div class="meta-row">github.com/earendil-works/pi · 8 packages · ~230,000 lines of TypeScript · MIT-licensed</div>
+      <div class="callout">Written for engineers who are new to agent frameworks. Every hard idea is broken into its own slide — use → to start.</div>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section class="slide" data-section="Orientation">
+    <div class="slide-inner">
+      <h2>It's not one tool. It's four, stacked.</h2>
+      <p>Pi ships as a monorepo of independent npm packages. Each does one job and the next one up composes it into something bigger.</p>
+      <div class="pkg-list">
+        <div class="pkg-row"><span class="pkg-name">@earendil-works/pi-ai</span><span class="pkg-desc">Talks to any LLM provider (OpenAI, Anthropic, Google, Bedrock…) through one interface.</span></div>
+        <div class="pkg-row"><span class="pkg-name">@earendil-works/pi-agent-core</span><span class="pkg-desc">Runs the "ask model → run tools → repeat" loop, and remembers what happened.</span></div>
+        <div class="pkg-row"><span class="pkg-name">@earendil-works/pi-coding-agent</span><span class="pkg-desc">The actual CLI you install and type <code>pi</code> to run — built from the two above.</span></div>
+        <div class="pkg-row"><span class="pkg-name">@earendil-works/pi-tui</span><span class="pkg-desc">The terminal UI that draws what you see on screen.</span></div>
+      </div>
+      <div class="callout">Four more supporting packages — protocol, client, server, storage, evals — get their own tour later.</div>
+    </div>
+  </section>
+
+  <!-- 3 -->
+  <section class="slide" data-section="Orientation">
+    <div class="slide-inner">
+      <h2>A toolkit with strong opinions</h2>
+      <ul class="bullets">
+        <li><strong>No built-in permission prompts.</strong> Approval is something you build with a hook, not something Pi decides for you.</li>
+        <li><strong>No MCP support baked in.</strong> Left out on purpose — add it yourself as an extension if you want it.</li>
+        <li><strong>Sessions aren't a flat chat log.</strong> They're a branching tree, closer to git commits than a scrollback buffer.</li>
+        <li><strong>Sandboxing lives outside the process.</strong> In a container or micro-VM, not in an in-app permission system.</li>
+      </ul>
+      <div class="callout">Keep these four in mind — every later section fills in the detail behind one of them.</div>
+    </div>
+  </section>
+
+  <!-- 4 -->
+  <section class="slide wide" data-section="Orientation">
+    <div class="slide-inner">
+      <h2>The shape of the system</h2>
+      <div class="diagram-panel">
+        <pre class="mermaid">
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#20232c','primaryTextColor':'#dfe2ea','primaryBorderColor':'#f0b429','lineColor':'#6fd3c7','tertiaryColor':'#1a1c23','fontFamily':'ui-monospace, monospace','fontSize':'15px'}}}%%
+flowchart TB
+  AI["pi-ai\nunified LLM client"] --> CORE["pi-agent-core\nagent loop + session tree"]
+  CORE --> CODING["pi-coding-agent\nCLI, tools, extensions"]
+  CODING --> TUI["pi-tui\nterminal renderer"]
+  CORE --> STORAGE["pi-storage\nSQLite session store"]
+  CODING -.optional.-> PROTO["pi-protocol + client + server\nremote control (experimental)"]
+        </pre>
+      </div>
+      <p class="diagram-caption">Solid arrows are always in play. The dashed one is an optional, still-experimental remote-control path we'll cover in the supporting cast.</p>
+    </div>
+  </section>
+
+  <!-- 5 -->
+  <section class="slide" data-section="Orientation">
+    <div class="slide-inner">
+      <h2>Where we're headed</h2>
+      <ol class="agenda">
+        <li><span class="a-title">pi-ai</span><span class="a-desc">One interface over ~35 different LLM providers.</span></li>
+        <li><span class="a-title">pi-agent-core</span><span class="a-desc">The loop, the state model, and the session tree.</span></li>
+        <li><span class="a-title">pi-coding-agent</span><span class="a-desc">The CLI: built-in tools, permissions, sandboxing, extensions.</span></li>
+        <li><span class="a-title">The supporting cast</span><span class="a-desc">tui, protocol, client, server, storage, evals.</span></li>
+        <li><span class="a-title">Synthesis</span><span class="a-desc">The full data flow, and what to steal for your own project.</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- 6 -->
+  <section class="slide divider-slide" data-section="pi-ai">
+    <div class="slide-inner">
+      <div class="divider-num">01</div>
+      <div class="divider-title">pi-ai</div>
+      <p class="divider-sub">Talking to any LLM provider through one door.</p>
+    </div>
+  </section>
+
+  <!-- 7 -->
+  <section class="slide" data-section="pi-ai">
+    <div class="slide-inner">
+      <h2>Every provider speaks a different dialect</h2>
+      <p>OpenAI, Anthropic, Google, Bedrock — each has its own request shape, its own streaming events, and its own way of describing a tool the model can call.</p>
+      <ul class="bullets">
+        <li>OpenAI puts the system prompt in the messages array as a role; Anthropic gives it a dedicated top-level field.</li>
+        <li>OpenAI streams tool-call fragments as array-indexed deltas; Anthropic sends an explicit "block start" then JSON fragments.</li>
+        <li>Even "max tokens" isn't one field name everywhere — some APIs call it <code>max_tokens</code>, others <code>max_completion_tokens</code>.</li>
+      </ul>
+      <div class="callout">pi-ai's job: let the rest of Pi write code once, against one shape, no matter which of ~35 supported providers is actually answering.</div>
+    </div>
+  </section>
+
+  <!-- 8 -->
+  <section class="slide" data-section="pi-ai">
+    <div class="slide-inner">
+      <h2>Three types hold up the whole abstraction</h2>
+      <div class="panel"><pre><span class="c">// simplified from packages/ai/src/types.ts</span>
+<span class="k">type</span> Context = {
+  systemPrompt<span class="c">?</span>: <span class="k">string</span>;
+  messages: Message[];
+  tools<span class="c">?</span>: Tool[];
+};
+
+<span class="k">type</span> Message = UserMessage | AssistantMessage | ToolResultMessage;
+
+<span class="k">type</span> AssistantMessage = {
+  content: (TextContent | ToolCall | ThinkingContent)[];
+  usage: Usage;
+  stopReason: <span class="s">"stop"</span> | <span class="s">"length"</span> | <span class="s">"toolUse"</span> | <span class="s">"error"</span> | <span class="s">"aborted"</span>;
+};</pre></div>
+      <p><strong>Context</strong> is the normalized request. <strong>Message</strong> is the normalized shape of anything in the conversation. <strong>AssistantMessage</strong> is the normalized reply — same fields whether the answer came from GPT, Claude, or Gemini.</p>
+      <div class="source-tag">packages/ai/src/types.ts</div>
+    </div>
+  </section>
+
+  <!-- 9 -->
+  <section class="slide" data-section="pi-ai">
+    <div class="slide-inner">
+      <h2>One event vocabulary, regardless of provider</h2>
+      <div class="panel"><pre><span class="k">type</span> AssistantMessageEvent =
+  | { type: <span class="s">"text_delta"</span>, delta: <span class="k">string</span>, partial: AssistantMessage }
+  | { type: <span class="s">"toolcall_delta"</span>, delta: <span class="k">string</span>, partial: AssistantMessage }
+  | { type: <span class="s">"done"</span>, reason: <span class="s">"stop"</span>|<span class="s">"length"</span>|<span class="s">"toolUse"</span>, message: AssistantMessage }
+  | { type: <span class="s">"error"</span>, reason: <span class="s">"aborted"</span>|<span class="s">"error"</span>, error: AssistantMessage };</pre></div>
+      <p>Every provider adapter translates its own wire format (SSE chunks, websocket frames…) into this same set of events. Each one also carries a live <code>partial</code> snapshot of the reply-so-far, which is what lets a UI show text streaming in.</p>
+      <div class="callout">Design lesson: a stream is contractually not allowed to throw. A failure becomes an <code>error</code> event carrying a synthetic message — so callers never need a try/catch around "the model might be halfway through talking."</div>
+    </div>
+  </section>
+
+  <!-- 10 -->
+  <section class="slide wide" data-section="pi-ai">
+    <div class="slide-inner">
+      <h2>Same tool call, two accents</h2>
+      <p>The model wants to call a <code>get_weather</code> tool. Here's how that one idea is represented on the wire by two providers, before pi-ai normalizes it back.</p>
+      <div class="compare-grid">
+        <div class="compare-card">
+          <h3>OpenAI</h3>
+          <div class="panel"><pre>tool_calls: [{
+  id: <span class="s">"call_1"</span>,
+  type: <span class="s">"function"</span>,
+  function: {
+    name: <span class="s">"get_weather"</span>,
+    arguments: <span class="s">'{"city":"Lima"}'</span> <span class="c">// a JSON string</span>
+  }
+}]</pre></div>
+        </div>
+        <div class="compare-card alt">
+          <h3>Anthropic</h3>
+          <div class="panel"><pre>content: [{
+  type: <span class="s">"tool_use"</span>,
+  id: <span class="s">"toolu_1"</span>,
+  name: <span class="s">"get_weather"</span>,
+  input: { city: <span class="s">"Lima"</span> } <span class="c">// a real object</span>
+}]</pre></div>
+        </div>
+      </div>
+      <div class="callout">Both converge on the exact same <code>toolcall_delta</code> / <code>toolcall_end</code> events by the time your code sees them — you never write provider-specific parsing.</div>
+    </div>
+  </section>
+
+  <!-- 11 -->
+  <section class="slide" data-section="pi-ai">
+    <div class="slide-inner">
+      <h2>Every reply carries its own receipt</h2>
+      <p>Each <code>AssistantMessage</code> comes back with a normalized <code>Usage</code>: input tokens, output tokens, cache-read/cache-write tokens, and a computed cost.</p>
+      <div class="stat-row">
+        <div class="stat"><div class="n">1</div><div class="l">central calculateCost()</div></div>
+        <div class="stat"><div class="n">2×</div><div class="l">Anthropic 1h cache-write rate</div></div>
+        <div class="stat"><div class="n">~4</div><div class="l">chars per token, rough estimate</div></div>
+      </div>
+      <p style="margin-top:1.1rem">Cost is computed from a per-model rate table ($ per million tokens), with special cases like Anthropic billing an extended cache write at double the base input rate. Before a real response exists — e.g. for a live "tokens used so far" indicator — Pi falls back to a rough four-characters-per-token estimate. Good enough for a progress bar, not for an invoice.</p>
+    </div>
+  </section>
+
+  <!-- 12 -->
+  <section class="slide" data-section="pi-ai">
+    <div class="slide-inner">
+      <h2>A flags object absorbs the chaos</h2>
+      <p>Many providers are "OpenAI-compatible" but not quite. Rather than writing a new adapter for each, pi-ai gives every model a small <code>compat</code> flags object the shared OpenAI adapter reads.</p>
+      <div class="table-wrap">
+      <table class="deck-table">
+        <tr><th>Flag</th><th>Problem it solves</th></tr>
+        <tr><td>maxTokensField</td><td>Some APIs want <code>max_tokens</code>, others <code>max_completion_tokens</code>.</td></tr>
+        <tr><td>supportsDeveloperRole</td><td>Newer reasoning models use a <code>developer</code> role instead of <code>system</code>.</td></tr>
+        <tr><td>requiresToolResultName</td><td>Some providers need the tool's name repeated on the result message.</td></tr>
+        <tr><td>thinkingFormat</td><td>~9 different ways providers encode "reasoning" tokens on the wire.</td></tr>
+      </table>
+      </div>
+      <div class="callout">One adapter, dozens of providers — the differences become data, not code.</div>
+    </div>
+  </section>
+
+  <!-- 13 -->
+  <section class="slide divider-slide" data-section="pi-agent-core">
+    <div class="slide-inner">
+      <div class="divider-num">02</div>
+      <div class="divider-title">pi-agent-core</div>
+      <p class="divider-sub">The loop that turns a chat model into an agent.</p>
+    </div>
+  </section>
+
+  <!-- 14 -->
+  <section class="slide" data-section="pi-agent-core">
+    <div class="slide-inner">
+      <h2>The mental model: what is a "turn"?</h2>
+      <p>Strip away the code and an agent is a small cycle repeated until there's nothing left to do:</p>
+      <ol class="agenda">
+        <li><span class="a-title">Ask the model</span><span class="a-desc">Send the conversation so far.</span></li>
+        <li><span class="a-title">It replies — maybe with tool calls</span><span class="a-desc">Text, and/or requests to run specific tools.</span></li>
+        <li><span class="a-title">Run those tools</span><span class="a-desc">Locally, on your machine.</span></li>
+        <li><span class="a-title">Feed the results back</span><span class="a-desc">Appended to the conversation.</span></li>
+        <li><span class="a-title">Repeat</span><span class="a-desc">Until the model stops asking for tools.</span></li>
+      </ol>
+      <div class="callout">One reply + its tool executions = one "turn." The next slide is exactly this, but as the real code sees it.</div>
+    </div>
+  </section>
+
+  <!-- 15 -->
+  <section class="slide wide" data-section="pi-agent-core">
+    <div class="slide-inner">
+      <h2>Inside <code>runLoop()</code></h2>
+      <div class="diagram-panel">
+        <pre class="mermaid">
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#20232c','primaryTextColor':'#dfe2ea','primaryBorderColor':'#f0b429','lineColor':'#6fd3c7','tertiaryColor':'#1a1c23','fontFamily':'ui-monospace, monospace','fontSize':'14px'}}}%%
+flowchart TD
+  A[turn_start] --> B[stream the model's reply]
+  B --> C{stopReason?}
+  C -- error / aborted --> Z[agent_end]
+  C -- length --> D[fail any tool calls\nas untrustworthy]
+  C -- toolUse / stop --> E{tool calls\nin the reply?}
+  D --> F
+  E -- yes --> F[execute tool calls]
+  E -- no --> G
+  F --> H[append tool results]
+  H --> I[turn_end]
+  I --> G{more tool calls or\nqueued messages?}
+  G -- yes --> A
+  G -- no --> J{any follow-up\nmessages queued?}
+  J -- yes --> A
+  J -- no --> Z
+        </pre>
+      </div>
+      <p class="diagram-caption">If the model's output was cut off mid-stream ("length"), Pi refuses to run the tool calls in it — truncated JSON arguments can look valid and still be wrong.</p>
+      <div class="source-tag">packages/agent/src/agent-loop.ts:155</div>
+    </div>
+  </section>
+
+  <!-- 16 -->
+  <section class="slide" data-section="pi-agent-core">
+    <div class="slide-inner">
+      <h2>Layer 1 of state: the stateless snapshot</h2>
+      <div class="panel"><pre><span class="k">type</span> AgentContext = {
+  systemPrompt: <span class="k">string</span>;
+  messages: AgentMessage[];
+  tools<span class="c">?</span>: AgentTool[];
+};</pre></div>
+      <p>The loop itself owns no memory. You hand it a snapshot — the whole conversation so far — and it hands back the new messages produced this turn. Nothing is mutated behind your back.</p>
+      <div class="callout">This is a deliberate design choice: keep the engine a pure function, and put statefulness in a thin wrapper around it (next slide).</div>
+    </div>
+  </section>
+
+  <!-- 17 -->
+  <section class="slide" data-section="pi-agent-core">
+    <div class="slide-inner">
+      <h2>Layer 2: the live object you actually hold</h2>
+      <p>The <code>Agent</code> class wraps the pure loop and tracks what's happening right now:</p>
+      <ul class="bullets">
+        <li><code>isStreaming</code>, <code>streamingMessage</code> — is a reply currently arriving, and what does it look like so far?</li>
+        <li><code>pendingToolCalls</code> — which tool calls are still running.</li>
+        <li><code>agent.steer(msg)</code> — inject a message <em>while</em> the model is mid-turn.</li>
+        <li><code>agent.followUp(msg)</code> — queue the next prompt for after this turn finishes.</li>
+        <li><code>agent.subscribe(listener)</code> — get every event as it happens.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 18 -->
+  <section class="slide wide" data-section="pi-agent-core">
+    <div class="slide-inner">
+      <h2>Layer 3: history as a tree, not a list</h2>
+      <div class="diagram-panel">
+        <pre class="mermaid">
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#20232c','primaryTextColor':'#dfe2ea','primaryBorderColor':'#f0b429','lineColor':'#6fd3c7','tertiaryColor':'#1a1c23','fontFamily':'ui-monospace, monospace','fontSize':'14px'}}}%%
+flowchart LR
+  R((start)) --> M1[user msg] --> M2[assistant + tool call] --> M3[tool result]
+  M3 --> M4[assistant reply]
+  M4 --> B1["branch A\n(kept)"]
+  M4 --> B2["branch B\n(abandoned, summarized)"]
+  B1 --> L(("leaf pointer\n= 'here'"))
+        </pre>
+      </div>
+      <p>Every entry (a message, a model change, a compaction event) has a <code>parentId</code>. A "leaf" pointer marks where you currently are. <code>navigateTree()</code> can move that pointer to any earlier point — like <code>git checkout</code> — and can even generate an LLM summary of the branch you're leaving behind.</p>
+      <div class="callout">This one structure is what later powers <code>/fork</code>, <code>/tree</code>, and <code>/resume</code> in the CLI.</div>
+    </div>
+  </section>
+
+  <!-- 19 -->
+  <section class="slide wide" data-section="pi-agent-core">
+    <div class="slide-inner">
+      <h2>What actually happens when a tool gets called</h2>
+      <div class="diagram-panel">
+        <pre class="mermaid">
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#20232c','primaryTextColor':'#dfe2ea','primaryBorderColor':'#f0b429','lineColor':'#6fd3c7','tertiaryColor':'#1a1c23','fontFamily':'ui-monospace, monospace','fontSize':'14px'}}}%%
+flowchart LR
+  A[model asks for a tool] --> B[look it up by name]
+  B --> C[prepareArguments]
+  C --> D[validate against schema]
+  D --> E{beforeToolCall hook}
+  E -- blocked --> F[error result,\nnever executes]
+  E -- allowed --> G["execute(signal, onUpdate)"]
+  G --> H[afterToolCall hook]
+  H --> I[turned into a ToolResultMessage]
+  I --> J[fed back into the conversation]
+        </pre>
+      </div>
+      <div class="diagram-caption">Every safety decision funnels through one seam: the <code>beforeToolCall</code> hook. It's the only place that can say no.</div>
+    </div>
+  </section>
+
+  <!-- 20 -->
+  <section class="slide" data-section="pi-agent-core">
+    <div class="slide-inner">
+      <h2>Tools can run at once — carefully</h2>
+      <p>By default, if the model requests several tool calls in one reply, Pi runs them <strong>in parallel</strong>. Two exceptions force sequential execution: the caller sets a global "sequential" mode, or an individual tool declares itself <code>executionMode: "sequential"</code> (a tool that isn't safe to run concurrently with itself, for instance).</p>
+      <div class="callout">Even in parallel mode, permission checks (<code>beforeToolCall</code>) still run one at a time, in order — only the actual <code>execute()</code> calls happen concurrently. Results are reassembled back into the model's original order regardless of which one finishes first.</div>
+    </div>
+  </section>
+
+  <!-- 21 -->
+  <section class="slide" data-section="pi-agent-core">
+    <div class="slide-inner">
+      <h2>There's no approval system — there's a hook</h2>
+      <p>At this layer, "permission" isn't a feature. It's one optional function:</p>
+      <div class="panel"><pre>beforeToolCall(call) <span class="k">=></span> { block: <span class="k">true</span>, reason: <span class="s">"needs human approval"</span> }
+<span class="c">// returning this prevents execution and injects an error result instead</span></pre></div>
+      <p>That's the entire mechanism pi-agent-core provides. It doesn't decide what "asking permission" looks like, or when to ask — that's left to whoever builds on top. Keep this in mind for the next section, because the CLI built on top of it makes a very deliberate choice here.</p>
+    </div>
+  </section>
+
+  <!-- 22 -->
+  <section class="slide" data-section="pi-agent-core">
+    <div class="slide-inner">
+      <h2>What happens when the conversation gets too big</h2>
+      <p>Every model has a context window — a maximum number of tokens it can see at once. Pi checks usage against that limit every turn and, when it gets close, compacts:</p>
+      <div class="stat-row">
+        <div class="stat"><div class="n">16,384</div><div class="l">tokens reserved as headroom</div></div>
+        <div class="stat"><div class="n">20,000</div><div class="l">most-recent tokens kept verbatim</div></div>
+      </div>
+      <p style="margin-top:1.1rem">Older messages are summarized by a dedicated LLM call, the summary replaces them, and the recent tail is kept exactly as-is. The whole operation is recorded as its own entry in the session tree from two slides ago — compaction doesn't erase history, it adds a node that says "everything before this point became a summary."</p>
+    </div>
+  </section>
+
+  <!-- 23 -->
+  <section class="slide" data-section="pi-agent-core">
+    <div class="slide-inner">
+      <h2>Four patterns worth stealing</h2>
+      <ul class="bullets wide-list">
+        <li><strong>Pub/sub over the loop.</strong> <code>subscribe()</code>/<code>on()</code> let any number of listeners (a UI, a logger, a test) observe the same run without coupling to it.</li>
+        <li><strong>Hooks as middleware.</strong> <code>beforeToolCall</code>, <code>afterToolCall</code>, <code>transformContext</code>, <code>prepareNextTurn</code> are injection points around an otherwise closed loop.</li>
+        <li><strong>Pure core, stateful shell.</strong> The loop is a function; <code>Agent</code> and the harness are the classes that hold state around it.</li>
+        <li><strong><code>Result&lt;T, E&gt;</code> over exceptions.</strong> Expected failure paths (compaction, summarization) return a typed result instead of throwing.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 24 -->
+  <section class="slide divider-slide" data-section="pi-coding-agent">
+    <div class="slide-inner">
+      <div class="divider-num">03</div>
+      <div class="divider-title">pi-coding-agent</div>
+      <p class="divider-sub">The CLI you actually type <code>pi</code> to run.</p>
+    </div>
+  </section>
+
+  <!-- 25 -->
+  <section class="slide wide" data-section="pi-coding-agent">
+    <div class="slide-inner">
+      <h2>Seven tools, on by default</h2>
+      <div class="table-wrap">
+      <table class="deck-table">
+        <tr><th>Tool</th><th>What it does</th><th>Notable detail</th></tr>
+        <tr><td>read</td><td>Reads a file, by line range if needed.</td><td>Checks the file is readable first; no path is off-limits.</td></tr>
+        <tr><td>write</td><td>Writes a full file, creating folders as needed.</td><td>No diff or confirmation step — it just overwrites.</td></tr>
+        <tr><td>edit</td><td>Exact-string find/replace inside a file.</td><td>The target text must be unique in the file, or it refuses.</td></tr>
+        <tr><td>bash</td><td>Runs a shell command.</td><td>No allowlist or blocklist of commands at all.</td></tr>
+        <tr><td>grep</td><td>Regex/text search across files (via ripgrep).</td><td>Capped at 100 matches by default.</td></tr>
+        <tr><td>find</td><td>Glob-based file search (via fd).</td><td>Capped at 1,000 results by default.</td></tr>
+        <tr><td>ls</td><td>Lists a directory.</td><td>Capped at 500 entries by default.</td></tr>
+      </table>
+      </div>
+      <div class="callout">Notice what's missing from the "notable detail" column on <code>bash</code>: nothing. That's not an oversight — it's the topic of the next slide.</div>
+    </div>
+  </section>
+
+  <!-- 26 -->
+  <section class="slide" data-section="pi-coding-agent">
+    <div class="slide-inner">
+      <h2>"It intentionally does not include permission popups"</h2>
+      <p>That's a direct line from Pi's own docs. By default, the CLI runs with the full permissions of the process that launched it — no per-action confirmation dialog exists.</p>
+      <p>What does exist is narrower than it sounds:</p>
+      <ul class="bullets">
+        <li><strong>Project trust</strong> — a one-time yes/no on whether to load project-local config, extensions, and skills at all. Not a per-action gate.</li>
+        <li><strong><code>beforeToolCall</code> hook</strong> (from pi-agent-core) — the seam a third-party extension can use to build its own confirmation prompt, e.g. before <code>rm -rf</code>.</li>
+        <li><strong>Static tool filters</strong> — flags like <code>--tools</code> / <code>--exclude-tools</code> disable whole tools at startup. A config-time allowlist, not a runtime prompt.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 27 -->
+  <section class="slide wide" data-section="pi-coding-agent">
+    <div class="slide-inner">
+      <h2>If you want a fence, build it around the process</h2>
+      <p>Since there's no in-app sandbox, isolation is pushed to the OS or VM boundary, in three documented patterns:</p>
+      <div class="table-wrap">
+      <table class="deck-table">
+        <tr><th>Pattern</th><th>Isolation boundary</th><th>What stays on the host</th></tr>
+        <tr><td>Gondolin extension</td><td>Built-in tools & shell commands run inside a local Linux micro-VM.</td><td>Pi itself, and your provider credentials.</td></tr>
+        <tr><td>Plain Docker</td><td>The entire Pi process runs inside one container.</td><td>Nothing — API keys are passed into the container.</td></tr>
+        <tr><td>OpenShell</td><td>The entire process runs inside a policy-controlled sandbox (filesystem/network/credential rules).</td><td>Real API keys — the sandbox talks to a local proxy that injects them upstream.</td></tr>
+      </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- 28 -->
+  <section class="slide" data-section="pi-coding-agent">
+    <div class="slide-inner">
+      <h2>Every conversation is a save file</h2>
+      <p>Sessions persist to disk as an append-only log, using the same tree structure covered earlier — so a session isn't just resumable, it's <em>branchable</em>.</p>
+      <div class="panel"><pre>pi -c              <span class="c"># continue the most recent session</span>
+pi -r              <span class="c"># pick a past session interactively</span>
+pi --fork &lt;id&gt;     <span class="c"># branch a new session off an old one</span>
+/tree              <span class="c"># navigate the session's branch structure</span>
+/compact           <span class="c"># manually trigger the summarize-and-cut from earlier</span></pre></div>
+    </div>
+  </section>
+
+  <!-- 29 -->
+  <section class="slide" data-section="pi-coding-agent">
+    <div class="slide-inner">
+      <h2>Small core, everything else is a plugin</h2>
+      <ul class="bullets">
+        <li><strong>Extensions</strong> — TypeScript modules that can register custom tools, register slash-commands, and hook into any lifecycle event.</li>
+        <li><strong>Skills</strong> — self-contained folders of instructions and scripts, loaded on demand, following the community "Agent Skills" convention.</li>
+        <li><strong>Pi packages</strong> — installable bundles of extensions, skills, and prompt templates (<code>pi install npm:@foo/bar</code>).</li>
+        <li><strong>No MCP, on purpose.</strong> The maintainers' stated position: keep the core small, and let you add an MCP client as an extension if you need one — rather than owning that complexity by default.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 30 -->
+  <section class="slide" data-section="pi-coding-agent">
+    <div class="slide-inner">
+      <h2>From <code>pi ...</code> to a running agent</h2>
+      <ol class="agenda">
+        <li><span class="a-title">Parse arguments</span><span class="a-desc">Turn argv into a typed options object.</span></li>
+        <li><span class="a-title">Resolve the mode</span><span class="a-desc">interactive, print (<code>-p</code> / piped input), json, or rpc.</span></li>
+        <li><span class="a-title">Resolve the session</span><span class="a-desc">New, continued, resumed, or forked.</span></li>
+        <li><span class="a-title">Resolve project trust</span><span class="a-desc">Should local config/extensions even load?</span></li>
+        <li><span class="a-title">Build runtime services</span><span class="a-desc">Settings, model list, extension/skill loader.</span></li>
+        <li><span class="a-title">Dispatch</span><span class="a-desc">Hand off to the right mode's runner.</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- 31 -->
+  <section class="slide divider-slide" data-section="Supporting cast">
+    <div class="slide-inner">
+      <div class="divider-num">04</div>
+      <div class="divider-title">The supporting cast</div>
+      <p class="divider-sub">tui, protocol, client, server, storage, evals.</p>
+    </div>
+  </section>
+
+  <!-- 32 -->
+  <section class="slide wide" data-section="Supporting cast">
+    <div class="slide-inner">
+      <h2>pi-tui: redraw only what changed</h2>
+      <p>"Differential rendering" here means a row-level diff, not a full repaint: every frame renders the whole screen into an array of strings (one per terminal row), then compares it line-by-line against last frame's array.</p>
+      <div class="diff-grid">
+        <div>
+          <div class="diff-label">Frame N</div>
+          <div class="term-mock"><div class="bar"><span></span><span></span><span></span></div>
+            <div class="lines">
+              <div class="row">$ pi</div>
+              <div class="row">Thinking...</div>
+              <div class="row">&gt; reading file.ts</div>
+            </div>
+          </div>
+        </div>
+        <div class="arrow">→</div>
+        <div>
+          <div class="diff-label">Frame N+1 (only changed rows repainted)</div>
+          <div class="term-mock"><div class="bar"><span></span><span></span><span></span></div>
+            <div class="lines">
+              <div class="row">$ pi</div>
+              <div class="row hit">Done. 3 files edited.</div>
+              <div class="row hit">&gt; running tests...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="diagram-caption" style="margin-top:1rem">The cursor jumps straight to the first changed row and rewrites only through the last changed row — similar in spirit to React's virtual-DOM diffing, applied to terminal lines instead of DOM nodes.</p>
+    </div>
+  </section>
+
+  <!-- 33 -->
+  <section class="slide wide" data-section="Supporting cast">
+    <div class="slide-inner">
+      <h2>An experimental door for remote control</h2>
+      <div class="diagram-panel">
+        <pre class="mermaid">
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#20232c','primaryTextColor':'#dfe2ea','primaryBorderColor':'#f0b429','lineColor':'#6fd3c7','actorBorder':'#f0b429','actorBkg':'#20232c','actorTextColor':'#dfe2ea','signalColor':'#dfe2ea','signalTextColor':'#dfe2ea','fontFamily':'ui-monospace, monospace','fontSize':'14px'}}}%%
+sequenceDiagram
+  participant Client as pi-client
+  participant Server as pi-server
+  Client->>Server: ClientHello (auth token)
+  Client->>Server: RequestEnvelope: prompt("fix the bug")
+  Server-->>Client: EventEnvelope: session_progress
+  Server-->>Client: EventEnvelope: session_progress
+  Server-->>Client: ResponseEnvelope: ok
+        </pre>
+      </div>
+      <p>Messages are CBOR-encoded, length-prefixed, and sent over a Unix domain socket; the server checks a SHA-256 token before accepting a connection. This is deliberately transport-neutral and still marked <strong>experimental</strong> — the shipped CLI's own terminal mode doesn't use it, and talks to the agent in the same process instead.</p>
+    </div>
+  </section>
+
+  <!-- 34 -->
+  <section class="slide" data-section="Supporting cast">
+    <div class="slide-inner">
+      <h2>pi-storage: the session tree, as SQL tables</h2>
+      <div class="table-wrap">
+      <table class="deck-table">
+        <tr><th>Table</th><th>Role</th></tr>
+        <tr><td>sessions</td><td>One row per session; tracks its parent session and current leaf.</td></tr>
+        <tr><td>session_entries</td><td>The tree nodes — each has a <code>parent_id</code>, a type, and a JSON payload.</td></tr>
+        <tr><td>branch_entries</td><td>A branch flattened into its ordered sequence of entries.</td></tr>
+        <tr><td>*_materialized</td><td>Cached views, so reopening a session doesn't replay the entire tree.</td></tr>
+      </table>
+      </div>
+      <div class="callout">Same DAG from the pi-agent-core section — SQLite (with WAL mode) is just where it lives on disk.</div>
+    </div>
+  </section>
+
+  <!-- 35 -->
+  <section class="slide" data-section="Supporting cast">
+    <div class="slide-inner">
+      <h2>pi-evals: testing an agent means testing it live</h2>
+      <p>You can't unit-test "does the model behave correctly" the normal way. pi-evals is a vitest-based framework that spins up a real agent session and runs it against a live model.</p>
+      <ul class="bullets">
+        <li>Some checks are simple — "does it answer this correctly, and report non-zero token usage."</li>
+        <li>Others use an LLM as a judge, scoring free-form answers for quality.</li>
+        <li>Every run's transcript and scores are saved as artifacts, so a prompt or model change can be tracked for regressions over time.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 36 -->
+  <section class="slide wide" data-section="Synthesis">
+    <div class="slide-inner">
+      <h2>Keystroke to response, end to end</h2>
+      <div class="diagram-panel">
+        <pre class="mermaid">
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#20232c','primaryTextColor':'#dfe2ea','primaryBorderColor':'#f0b429','lineColor':'#6fd3c7','tertiaryColor':'#1a1c23','fontFamily':'ui-monospace, monospace','fontSize':'13.5px'}}}%%
+flowchart LR
+  A[you type in the terminal] --> B[pi-tui captures input]
+  B --> C[pi-coding-agent\ninteractive mode]
+  C --> D[pi-agent-core\nturn loop]
+  D --> E[pi-ai streams\nthe LLM's reply]
+  E --> D
+  D --> F{tool call?}
+  F -- yes --> G[coding-agent\nexecutes the tool]
+  G --> D
+  F -- no --> H[pi-storage\npersists the turn]
+  H --> I[pi-tui\ndiffs & redraws\nchanged rows]
+        </pre>
+      </div>
+      <p class="diagram-caption">Everything here runs in a single process by default — the client/server split from the supporting cast is an optional side door, not the main road.</p>
+    </div>
+  </section>
+
+  <!-- 37 -->
+  <section class="slide" data-section="Synthesis">
+    <div class="slide-inner">
+      <h2>What to steal for your own agent</h2>
+      <ul class="bullets wide-list">
+        <li><strong>Separate a pure loop from its stateful wrapper.</strong> Testable engine, thin state on top.</li>
+        <li><strong>Model history as a tree the moment you need branching or undo</strong> — retrofitting it onto a flat array later is painful.</li>
+        <li><strong>Make permissions a hook, not a hardcoded prompt.</strong> Let the app built on top decide what "asking" means.</li>
+        <li><strong>Normalize provider differences into one event vocabulary early.</strong> Do the messy translation once, at the edge.</li>
+        <li><strong>Keep the core small; push policy to the edges.</strong> Sandboxing, MCP, and permissions are all "bring your own" in Pi — and that's the point, not a gap.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 38 -->
+  <section class="slide" data-section="Synthesis">
+    <div class="slide-inner">
+      <h2>Go read the source</h2>
+      <p>If you want to keep going, this is the order that will make the most sense after this deck:</p>
+      <ol class="agenda">
+        <li><span class="a-title">packages/agent/src/agent-loop.ts</span><span class="a-desc">The real <code>runLoop()</code> from the flowchart earlier.</span></li>
+        <li><span class="a-title">packages/ai/src/types.ts</span><span class="a-desc">The Context / Message / AssistantMessage types.</span></li>
+        <li><span class="a-title">packages/ai/src/api/anthropic-messages.ts</span><span class="a-desc">One concrete provider adapter, to see the translation in full.</span></li>
+        <li><span class="a-title">packages/coding-agent/docs/</span><span class="a-desc">security.md, containerization.md, extensions.md, sessions.md.</span></li>
+      </ol>
+      <div class="meta-row" style="margin-top:2rem">github.com/earendil-works/pi · pi.dev</div>
+    </div>
+  </section>
+
+</div>
+
+<div class="chrome">
+  <button class="nav-btn prev" id="prevBtn" aria-label="Previous slide">←</button>
+  <button class="nav-btn next" id="nextBtn" aria-label="Next slide">→</button>
+  <div class="section-dots" id="sectionDots"></div>
+</div>
+
+<script>
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  const total = slides.length;
+  let idx = 0;
+
+  const sections = [];
+  slides.forEach(s => {
+    const name = s.dataset.section;
+    if (!sections.includes(name)) sections.push(name);
+  });
+
+  const dotsEl = document.getElementById('sectionDots');
+  sections.forEach(name => {
+    const d = document.createElement('div');
+    d.className = 'dot';
+    d.title = name;
+    dotsEl.appendChild(d);
+  });
+  const dotEls = Array.from(dotsEl.children);
+
+  const progressFill = document.getElementById('progressFill');
+  const counterLabel = document.getElementById('counterLabel');
+  const prevBtn = document.getElementById('prevBtn');
+  const nextBtn = document.getElementById('nextBtn');
+
+  function pad(n){ return String(n).padStart(2,'0'); }
+
+  function render(){
+    slides.forEach((s,i) => s.classList.toggle('active', i === idx));
+    progressFill.style.width = (((idx+1)/total)*100) + '%';
+    counterLabel.textContent = pad(idx+1) + ' / ' + total;
+    prevBtn.disabled = idx === 0;
+    nextBtn.disabled = idx === total-1;
+    const currentSection = slides[idx].dataset.section;
+    dotEls.forEach((d,i) => d.classList.toggle('on', sections[i] === currentSection));
+    slides[idx].scrollTop = 0;
+  }
+
+  function go(delta){
+    idx = Math.min(total-1, Math.max(0, idx+delta));
+    render();
+  }
+
+  prevBtn.addEventListener('click', () => go(-1));
+  nextBtn.addEventListener('click', () => go(1));
+
+  window.addEventListener('keydown', (e) => {
+    if (['ArrowRight','ArrowDown','PageDown',' '].includes(e.key)){ e.preventDefault(); go(1); }
+    else if (['ArrowLeft','ArrowUp','PageUp'].includes(e.key)){ e.preventDefault(); go(-1); }
+    else if (e.key === 'Home'){ idx = 0; render(); }
+    else if (e.key === 'End'){ idx = total-1; render(); }
+  });
+
+  let touchStartX = null;
+  window.addEventListener('touchstart', e => touchStartX = e.touches[0].clientX);
+  window.addEventListener('touchend', e => {
+    if (touchStartX === null) return;
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    if (Math.abs(dx) > 60) go(dx < 0 ? 1 : -1);
+    touchStartX = null;
+  });
+
+  render();
+</script>
